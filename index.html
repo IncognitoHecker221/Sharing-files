@@ -168,8 +168,8 @@
 
     <script>
     const SUPABASE_URL = 'https://unhkrhqwkqubszohbczr.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_8ociy_Mit6KhFbUlT0X7uw_xjp_dgkC';
-    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const SUPABASE_ANON_KEY = 'sb_publishable_8ociy_Mit6KhFbUlT0X7uw_xjp_dgkC';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); // <- Czyste odwołanie do biblioteki
 
     let currentRole = null; 
 
