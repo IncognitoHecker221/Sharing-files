@@ -168,12 +168,13 @@
 
     <script>
     const SUPABASE_URL = 'https://unhkrhqwkqubszohbczr.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_8ociy_Mit6KhFbUlT0X7uw_xjp_dgkC';
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); // <- Czyste odwołanie do biblioteki
+    const SUPABASE_ANON_KEY = 'sb_publishable_8ociy_Mit6KhFbUlT0X7uw_xjp_dgkC';
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     let currentRole = null; 
+    let currentFiles = []; 
 
-    // Funkcje pomocnicze do SZYFROWANIA AES-GCM (256-bit) w przeglądarce
+    // Funkcje kryptograficzne AES-GCM
     async function generateAESKey() {
         const key = await window.crypto.subtle.generateKey(
             { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
@@ -210,7 +211,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         return new Blob([decrypted]);
     }
 
-    // Dynamiczne pokazywanie pola na hasło przy wyborze opcji z hasłem
     function togglePasswordInput() {
         const secType = document.getElementById('new-security').value;
         const container = document.getElementById('password-input-container');
@@ -246,6 +246,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         }
     }
 
+    // Pobieranie plików z bazy
     async function loadFiles() {
         const containerId = currentRole === 'admin' ? 'admin-files-container' : 'user-files-container';
         const container = document.getElementById(containerId);
@@ -262,10 +263,11 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
             return;
         }
 
+        currentFiles = files || []; 
         container.innerHTML = '';
         let visibleFilesCount = 0;
 
-        files.forEach(file => {
+        currentFiles.forEach(file => {
             const fileStatus = file.status || 'Widoczny';
             const secType = file.security_type || 'Brak';
 
@@ -277,7 +279,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
             
             let downloadSectionHTML = '';
             if (currentRole === 'admin' || fileStatus === 'Widoczny') {
-                downloadSectionHTML = `<button class="download-btn" onclick="downloadFileReal(${JSON.stringify(file).replace(/"/g, '&quot;')})">Pobierz plik</button>`;
+                downloadSectionHTML = `<button class="download-btn" onclick="downloadFileReal('${file.id}')">Pobierz plik</button>`;
             } else if (fileStatus === 'Tylko info') {
                 downloadSectionHTML = `<span style="color: #888; font-style: italic; font-size: 0.9em;">Plik zablokowany do pobrania (Tylko info)</span>`;
             }
@@ -302,7 +304,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
             if (currentRole === 'admin') {
                 cardHTML += `
                     <div class="admin-controls">
-                        <button class="btn-edit" onclick="editFile('${file.id}', '${file.title}', \`${(file.description || '').replace(/`/g, '\\`')}\`, '${fileStatus}', '${secType}', '${file.file_password || ''}')">Edytuj tekst i status</button>
+                        <button class="btn-edit" onclick="editFile('${file.id}')">Edytuj tekst i status</button>
                         <button class="btn-delete" onclick="deleteFile('${file.id}', '${file.file_path}')">Usuń</button>
                     </div>
                 `;
@@ -317,14 +319,16 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         }
     }
 
-    // Zmodyfikowana funkcja pobierania obsługująca Hasła i Odszyfrowywanie
-    async function downloadFileReal(fileObj) {
+    // Pobieranie i odszyfrowywanie pliku
+    async function downloadFileReal(fileId) {
+        const fileObj = currentFiles.find(f => f.id == fileId);
+        if (!fileObj) return;
+
         const secType = fileObj.security_type || 'Brak';
 
-        // 1. Walidacja HASŁA do pliku (jeśli wymagane i użytkownik nie jest adminem)
         if (currentRole !== 'admin' && (secType === 'Haslo' || secType === 'Szyfrowanie + haslo')) {
             const userPass = prompt('Ten plik jest zabezpieczony hasłem. Wprowadź hasło do pliku:');
-            if (userPass === null) return; // Anulowano
+            if (userPass === null) return; 
             if (userPass !== fileObj.file_password) {
                 alert('Nieprawidłowe hasło do pliku! Pobieranie przerwane.');
                 return;
@@ -332,25 +336,22 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         }
 
         try {
-            // 2. Pobranie pliku z Supabase Storage
             let { data: blobData, error } = await supabaseClient.storage
                 .from('uploads')
                 .download(fileObj.file_path);
 
             if (error) throw error;
 
-            // 3. ODSZYFROWYWANIE (jeśli wymagane)
             if (secType === 'Szyfrowanie' || secType === 'Szyfrowanie + haslo') {
                 try {
                     blobData = await decryptBlob(blobData, fileObj.encryption_key);
                 } catch (cryptoErr) {
                     console.error(cryptoErr);
-                    alert("Błąd odszyfrowywania pliku. Klucz może być uszkodzony.");
+                    alert("Błąd odszyfrowywania pliku.");
                     return;
                 }
             }
 
-            // 4. Wymuszenie fizycznego zapisu na dysku
             const blobUrl = URL.createObjectURL(blobData);
             const temporaryLink = document.createElement('a');
             temporaryLink.href = blobUrl;
@@ -369,7 +370,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         }
     }
 
-    // Dodawanie pliku z uwzględnieniem SZYFROWANIA i haseł
+    // Publikacja pliku
     async function uploadFile() {
         const titleInput = document.getElementById('new-title');
         const descInput = document.getElementById('new-desc');
@@ -400,7 +401,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
 
         let encryptionKey = null;
 
-        // Jeśli wybrano opcję z szyfrowaniem - kodujemy plik przed wysłaniem
         if (security === 'Szyfrowanie' || security === 'Szyfrowanie + haslo') {
             encryptionKey = await generateAESKey();
             file = await encryptBlob(file, encryptionKey);
@@ -449,6 +449,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         loadFiles();
     }
 
+    // Usuwanie pliku
     async function deleteFile(id, filePath) {
         if (!confirm('Na pewno chcesz usunąć ten plik?')) return;
 
@@ -471,37 +472,66 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); /
         loadFiles();
     }
 
-    async function editFile(id, oldTitle, oldDesc, oldStatus, oldSec, oldPass) {
-        const newTitle = prompt('Wprowadź nowy tytuł:', oldTitle);
-        if (newTitle === null) return;
-        
-        const newDesc = prompt('Wprowadź nowy opis:', oldDesc);
-        if (newDesc === null) return;
+    // ZAKTUALIZOWANA I ZABEZPIECZONA FUNKCJA EDYCJI
+    async function editFile(id) {
+        try {
+            if (!currentFiles || currentFiles.length === 0) {
+                alert("Błąd: Lista plików w pamięci jest pusta. Odśwież stronę.");
+                return;
+            }
 
-        const newStatus = prompt('Wprowadź status (Widoczny / Ukryty / Tylko info):', oldStatus);
-        if (newStatus === null) return;
+            const file = currentFiles.find(f => f.id == id);
+            if (!file) {
+                alert("Błąd: Nie znaleziono pliku w pamięci.");
+                return;
+            }
 
-        if (!['Widoczny', 'Ukryty', 'Tylko info'].includes(newStatus)) {
-            alert('Błąd: Niepoprawny status!');
-            return;
-        }
+            const oldTitle = file.title || "";
+            const oldDesc = file.description || "";
+            const oldStatus = file.status || "Widoczny";
+            const oldPass = file.file_password || "";
 
-        let newPass = oldPass;
-        // Pozwól na zmianę hasła tylko, jeśli plik je obsługuje
-        if (oldSec === 'Haslo' || oldSec === 'Szyfrowanie + haslo') {
-            newPass = prompt('Wprowadź nowe hasło do pliku:', oldPass);
-            if (newPass === null) return;
-        }
+            const newTitle = prompt('Wprowadź nowy tytuł:', oldTitle);
+            if (newTitle === null) return; 
+            
+            const newDesc = prompt('Wprowadź nowy opis:', oldDesc);
+            if (newDesc === null) return; 
 
-        const { error } = await supabaseClient
-            .from('files')
-            .update({ title: newTitle, description: newDesc, status: newStatus, file_password: newPass })
-            .eq('id', id);
+            const newStatus = prompt('Wprowadź status (Widoczny / Ukryty / Tylko info):', oldStatus);
+            if (newStatus === null) return; 
 
-        if (error) {
-            alert("Błąd edycji: " + error.message);
-        } else {
-            loadFiles();
+            if (!['Widoczny', 'Ukryty', 'Tylko info'].includes(newStatus)) {
+                alert('Błąd: Niepoprawny status! Dozwolone wartości to: Widoczny, Ukryty, Tylko info');
+                return;
+            }
+
+            let newPass = oldPass;
+            if (file.security_type === 'Haslo' || file.security_type === 'Szyfrowanie + haslo') {
+                const promptPass = prompt('Wprowadź nowe hasło do pliku:', oldPass);
+                if (promptPass === null) return; 
+                newPass = promptPass;
+            }
+
+            const { error } = await supabaseClient
+                .from('files')
+                .update({ 
+                    title: newTitle, 
+                    description: newDesc, 
+                    status: newStatus, 
+                    file_password: newPass || null 
+                })
+                .eq('id', id);
+
+            if (error) {
+                throw error;
+            } else {
+                alert("Zmiany zostały zapisane pomyślnie!");
+                loadFiles(); 
+            }
+
+        } catch (catchError) {
+            console.error("Błąd podczas edycji pliku:", catchError);
+            alert("Wystąpił błąd w trakcie zapisu! Szczegóły: " + (catchError.message || catchError));
         }
     }
 </script>
