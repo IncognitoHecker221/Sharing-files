@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strona Udostępniania Plików</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .hidden { display: none !important; }
+        
+        #login-screen {
+            text-align: center;
+            margin-top: 100px;
+        }
+        #login-screen input {
+            padding: 10px;
+            font-size: 16px;
+            width: 250px;
+        }
+        #login-screen button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .file-card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .file-title {
+            font-size: 2.5em;
+            font-weight: 900;
+            margin: 0 0 10px 0;
+            color: #1a1a1a;
+        }
+        .file-desc {
+            font-size: 0.9em;
+            line-height: 1.5;
+            color: #555;
+            margin-bottom: 15px;
+        }
+
+        .download-btn {
+            display: inline-block;
+            background-color: #007bff;
+            color: white;
+            padding: 8px 15px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .download-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .admin-controls {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+        }
+        .admin-controls button {
+            margin-right: 10px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .btn-delete { background-color: #dc3545; color: white; border: none; border-radius: 4px; }
+        .btn-edit { background-color: #ffc107; color: black; border: none; border-radius: 4px; }
+        
+        #upload-form {
+            background: #e9ecef;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        #upload-form input, #upload-form textarea, #upload-form select {
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        
+        .status-badge {
+            font-size: 0.4em;
+            vertical-align: middle;
+            margin-left: 10px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: white;
+        }
+        .badge-widoczny { background-color: #28a745; }
+        .badge-ukryty { background-color: #6c757d; }
+        .badge-info { background-color: #17a2b8; }
+        
+        .security-badge {
+            font-size: 0.4em;
+            vertical-align: middle;
+            margin-left: 5px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: white;
+            background-color: #6f42c1;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+        <h2>Wprowadź hasło dostępu</h2>
+        <input type="password" id="password-input" placeholder="Hasło...">
+        <button onclick="checkPassword()">Wejdź</button>
+        <p id="login-error" style="color: red;" class="hidden">Nieprawidłowe hasło!</p>
+    </div>
+
+    <div id="user-screen" class="hidden">
+        <h1>Udostępnione pliki</h1>
+        <div id="user-files-container">Ładowanie plików...</div>
+    </div>
+
+    <div id="admin-screen" class="hidden">
+        <h1>Panel Administratora</h1>
+        
+        <div id="upload-form">
+            <h3>Dodaj nowy plik</h3>
+            <input type="text" id="new-title" placeholder="Tytuł pliku">
+            <textarea id="new-desc" rows="4" placeholder="Długi opis pliku..."></textarea>
+            
+            <label for="new-status">Status widoczności:</label>
+            <select id="new-status">
+                <option value="Widoczny" selected>Widoczny (Wszyscy widzą i pobierają)</option>
+                <option value="Ukryty">Ukryty (Tylko dla adminów)</option>
+                <option value="Tylko info">Tylko info (Wszyscy widzą tekst, brak pobierania)</option>
+            </select>
+
+            <label for="new-security">Bezpieczeństwo pliku:</label>
+            <select id="new-security" onchange="togglePasswordInput()">
+                <option value="Brak" selected>Brak dodatkowych zabezpieczeń</option>
+                <option value="Szyfrowanie">Szyfrowanie (Automatyczne kodowanie pliku)</option>
+                <option value="Haslo">Hasło (Wymaga podania hasła przy pobieraniu)</option>
+                <option value="Szyfrowanie + haslo">Szyfrowanie + hasło (Zaszyfrowany plik + hasło)</option>
+            </select>
+
+            <div id="password-input-container" class="hidden">
+                <input type="text" id="new-file-password" placeholder="Ustaw hasło dla pobierających ten plik">
+            </div>
+
+            <input type="file" id="new-file">
+            <button onclick="uploadFile()">Prześlij i udostępnij</button>
+            <p id="upload-status"></p>
+        </div>
+
+        <h3>Zarządzaj plikami</h3>
+        <div id="admin-files-container">Ładowanie plików...</div>
+    </div>
+
+    <script>
+    const SUPABASE_URL = 'https://unhkrhqwkqubszohbczr.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_8ociy_Mit6KhFbUlT0X7uw_xjp_dgkC';
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let currentRole = null; 
+
+    // Funkcje pomocnicze do SZYFROWANIA AES-GCM (256-bit) w przeglądarce
+    async function generateAESKey() {
+        const key = await window.crypto.subtle.generateKey(
+            { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+        );
+        const exported = await window.crypto.subtle.exportKey("raw", key);
+        return btoa(String.fromCharCode(...new Uint8Array(exported)));
+    }
+
+    async function importAESKey(base64Key) {
+        const raw = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
+        return await window.crypto.subtle.importKey(
+            "raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]
+        );
+    }
+
+    async function encryptBlob(blob, base64Key) {
+        const key = await importAESKey(base64Key);
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const arrayBuffer = await blob.arrayBuffer();
+        const ciphertext = await window.crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: iv }, key, arrayBuffer
+        );
+        return new Blob([iv, ciphertext], { type: blob.type });
+    }
+
+    async function decryptBlob(blob, base64Key) {
+        const key = await importAESKey(base64Key);
+        const fullBuffer = await blob.arrayBuffer();
+        const iv = fullBuffer.slice(0, 12);
+        const ciphertext = fullBuffer.slice(12);
+        const decrypted = await window.crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: new Uint8Array(iv) }, key, ciphertext
+        );
+        return new Blob([decrypted]);
+    }
+
+    // Dynamiczne pokazywanie pola na hasło przy wyborze opcji z hasłem
+    function togglePasswordInput() {
+        const secType = document.getElementById('new-security').value;
+        const container = document.getElementById('password-input-container');
+        if (secType === 'Haslo' || secType === 'Szyfrowanie + haslo') {
+            container.classList.remove('hidden');
+        } else {
+            container.classList.add('hidden');
+        }
+    }
+
+    document.getElementById('password-input').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            checkPassword();
+        }
+    });
+
+    function checkPassword() {
+        const pass = document.getElementById('password-input').value;
+        const errorMsg = document.getElementById('login-error');
+        
+        if (pass === 'SIGMAMarcin') {
+            currentRole = 'user';
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('user-screen').classList.remove('hidden');
+            loadFiles();
+        } else if (pass === 'AdminModer') {
+            currentRole = 'admin';
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('admin-screen').classList.remove('hidden');
+            loadFiles();
+        } else {
+            errorMsg.classList.remove('hidden');
+        }
+    }
+
+    async function loadFiles() {
+        const containerId = currentRole === 'admin' ? 'admin-files-container' : 'user-files-container';
+        const container = document.getElementById(containerId);
+        container.innerHTML = 'Ładowanie plików...';
+
+        const { data: files, error } = await supabaseClient
+            .from('files')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error("Błąd pobierania bazy:", error);
+            container.innerHTML = 'Wystąpił błąd podczas pobierania danych.';
+            return;
+        }
+
+        container.innerHTML = '';
+        let visibleFilesCount = 0;
+
+        files.forEach(file => {
+            const fileStatus = file.status || 'Widoczny';
+            const secType = file.security_type || 'Brak';
+
+            if (currentRole === 'user' && fileStatus === 'Ukryty') return; 
+
+            visibleFilesCount++;
+            const fileCard = document.createElement('div');
+            fileCard.className = 'file-card';
+            
+            let downloadSectionHTML = '';
+            if (currentRole === 'admin' || fileStatus === 'Widoczny') {
+                downloadSectionHTML = `<button class="download-btn" onclick="downloadFileReal(${JSON.stringify(file).replace(/"/g, '&quot;')})">Pobierz plik</button>`;
+            } else if (fileStatus === 'Tylko info') {
+                downloadSectionHTML = `<span style="color: #888; font-style: italic; font-size: 0.9em;">Plik zablokowany do pobrania (Tylko info)</span>`;
+            }
+
+            let badgesHTML = '';
+            if (currentRole === 'admin') {
+                let badgeClass = 'badge-widoczny';
+                if (fileStatus === 'Ukryty') badgeClass = 'badge-ukryty';
+                if (fileStatus === 'Tylko info') badgeClass = 'badge-info';
+                badgesHTML += `<span class="status-badge ${badgeClass}">${fileStatus}</span>`;
+            }
+            if (secType !== 'Brak') {
+                badgesHTML += `<span class="security-badge">${secType}</span>`;
+            }
+            
+            let cardHTML = `
+                <h2 class="file-title">${file.title}${badgesHTML}</h2>
+                <p class="file-desc">${(file.description || '').replace(/\n/g, '<br>')}</p>
+                ${downloadSectionHTML}
+            `;
+
+            if (currentRole === 'admin') {
+                cardHTML += `
+                    <div class="admin-controls">
+                        <button class="btn-edit" onclick="editFile('${file.id}', '${file.title}', \`${(file.description || '').replace(/`/g, '\\`')}\`, '${fileStatus}', '${secType}', '${file.file_password || ''}')">Edytuj tekst i status</button>
+                        <button class="btn-delete" onclick="deleteFile('${file.id}', '${file.file_path}')">Usuń</button>
+                    </div>
+                `;
+            }
+
+            fileCard.innerHTML = cardHTML;
+            container.appendChild(fileCard);
+        });
+
+        if (visibleFilesCount === 0) {
+            container.innerHTML = '<p>Brak dostępnych plików.</p>';
+        }
+    }
+
+    // Zmodyfikowana funkcja pobierania obsługująca Hasła i Odszyfrowywanie
+    async function downloadFileReal(fileObj) {
+        const secType = fileObj.security_type || 'Brak';
+
+        // 1. Walidacja HASŁA do pliku (jeśli wymagane i użytkownik nie jest adminem)
+        if (currentRole !== 'admin' && (secType === 'Haslo' || secType === 'Szyfrowanie + haslo')) {
+            const userPass = prompt('Ten plik jest zabezpieczony hasłem. Wprowadź hasło do pliku:');
+            if (userPass === null) return; // Anulowano
+            if (userPass !== fileObj.file_password) {
+                alert('Nieprawidłowe hasło do pliku! Pobieranie przerwane.');
+                return;
+            }
+        }
+
+        try {
+            // 2. Pobranie pliku z Supabase Storage
+            let { data: blobData, error } = await supabaseClient.storage
+                .from('uploads')
+                .download(fileObj.file_path);
+
+            if (error) throw error;
+
+            // 3. ODSZYFROWYWANIE (jeśli wymagane)
+            if (secType === 'Szyfrowanie' || secType === 'Szyfrowanie + haslo') {
+                try {
+                    blobData = await decryptBlob(blobData, fileObj.encryption_key);
+                } catch (cryptoErr) {
+                    console.error(cryptoErr);
+                    alert("Błąd odszyfrowywania pliku. Klucz może być uszkodzony.");
+                    return;
+                }
+            }
+
+            // 4. Wymuszenie fizycznego zapisu na dysku
+            const blobUrl = URL.createObjectURL(blobData);
+            const temporaryLink = document.createElement('a');
+            temporaryLink.href = blobUrl;
+            
+            const originalName = fileObj.file_path.substring(fileObj.file_path.indexOf('_') + 1);
+            temporaryLink.download = originalName;
+            
+            document.body.appendChild(temporaryLink);
+            temporaryLink.click();
+            
+            document.body.removeChild(temporaryLink);
+            URL.revokeObjectURL(blobUrl);
+        } catch (error) {
+            console.error("Błąd podczas pobierania pliku:", error);
+            alert("Nie udało się pobrać pliku.");
+        }
+    }
+
+    // Dodawanie pliku z uwzględnieniem SZYFROWANIA i haseł
+    async function uploadFile() {
+        const titleInput = document.getElementById('new-title');
+        const descInput = document.getElementById('new-desc');
+        const statusInput = document.getElementById('new-status');
+        const secInput = document.getElementById('new-security');
+        const passInput = document.getElementById('new-file-password');
+        const fileInput = document.getElementById('new-file');
+        const statusBox = document.getElementById('upload-status');
+
+        const title = titleInput.value;
+        const desc = descInput.value;
+        const status = statusInput.value;
+        const security = secInput.value;
+        const filePassword = passInput.value;
+        let file = fileInput.files[0];
+
+        if (!title || !file) {
+            alert('Tytuł i plik są wymagane!');
+            return;
+        }
+
+        if ((security === 'Haslo' || security === 'Szyfrowanie + haslo') && !filePassword) {
+            alert('Musisz podać hasło zabezpieczające dla tego pliku!');
+            return;
+        }
+
+        statusBox.innerText = "Przetwarzanie i przesyłanie pliku...";
+
+        let encryptionKey = null;
+
+        // Jeśli wybrano opcję z szyfrowaniem - kodujemy plik przed wysłaniem
+        if (security === 'Szyfrowanie' || security === 'Szyfrowanie + haslo') {
+            encryptionKey = await generateAESKey();
+            file = await encryptBlob(file, encryptionKey);
+        }
+
+        const filePath = `${Date.now()}_${fileInput.files[0].name}`;
+
+        const { data: storageData, error: storageError } = await supabaseClient.storage
+            .from('uploads')
+            .upload(filePath, file);
+
+        if (storageError) {
+            console.error(storageError);
+            statusBox.innerText = "Błąd przesyłania pliku: " + storageError.message;
+            return;
+        }
+
+        const { data: dbData, error: dbError } = await supabaseClient
+            .from('files')
+            .insert([{ 
+                title: title, 
+                description: desc, 
+                file_path: filePath, 
+                status: status,
+                security_type: security,
+                file_password: filePassword || null,
+                encryption_key: encryptionKey
+            }]);
+
+        if (dbError) {
+            console.error(dbError);
+            statusBox.innerText = "Błąd zapisu w bazie danych.";
+            return;
+        }
+
+        statusBox.innerText = "Sukces! Plik dodany.";
+        titleInput.value = '';
+        descInput.value = '';
+        statusInput.value = 'Widoczny';
+        secInput.value = 'Brak';
+        passInput.value = '';
+        fileInput.value = '';
+        togglePasswordInput();
+        
+        setTimeout(() => { statusBox.innerText = ""; }, 3000);
+        loadFiles();
+    }
+
+    async function deleteFile(id, filePath) {
+        if (!confirm('Na pewno chcesz usunąć ten plik?')) return;
+
+        const { error: storageError } = await supabaseClient.storage
+            .from('uploads')
+            .remove([filePath]);
+
+        if (storageError) console.error("Błąd usunięcia z magazynu:", storageError);
+
+        const { error: dbError } = await supabaseClient
+            .from('files')
+            .delete()
+            .eq('id', id);
+
+        if (dbError) {
+            alert("Błąd usuwania: " + dbError.message);
+            return;
+        }
+
+        loadFiles();
+    }
+
+    async function editFile(id, oldTitle, oldDesc, oldStatus, oldSec, oldPass) {
+        const newTitle = prompt('Wprowadź nowy tytuł:', oldTitle);
+        if (newTitle === null) return;
+        
+        const newDesc = prompt('Wprowadź nowy opis:', oldDesc);
+        if (newDesc === null) return;
+
+        const newStatus = prompt('Wprowadź status (Widoczny / Ukryty / Tylko info):', oldStatus);
+        if (newStatus === null) return;
+
+        if (!['Widoczny', 'Ukryty', 'Tylko info'].includes(newStatus)) {
+            alert('Błąd: Niepoprawny status!');
+            return;
+        }
+
+        let newPass = oldPass;
+        // Pozwól na zmianę hasła tylko, jeśli plik je obsługuje
+        if (oldSec === 'Haslo' || oldSec === 'Szyfrowanie + haslo') {
+            newPass = prompt('Wprowadź nowe hasło do pliku:', oldPass);
+            if (newPass === null) return;
+        }
+
+        const { error } = await supabaseClient
+            .from('files')
+            .update({ title: newTitle, description: newDesc, status: newStatus, file_password: newPass })
+            .eq('id', id);
+
+        if (error) {
+            alert("Błąd edycji: " + error.message);
+        } else {
+            loadFiles();
+        }
+    }
+</script>
+
+</body>
+</html>
